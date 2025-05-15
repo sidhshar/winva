@@ -1,2 +1,4 @@
 psutil
 wmi
+python-dotenv
+requests
