@@ -1,4 +1,6 @@
 import os
+import re
+import winreg
 import socket
 import platform
 import subprocess
@@ -137,6 +139,65 @@ def list_services():
         log(f"[!] Error listing services: {e}")
     log("")
 
+def get_installed_apps():
+    log("==== Installed Applications + CVE Check ====")
+    uninstall_paths = [
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+    ]
+    
+    def search_and_log_cves(app_name, version):
+        if not app_name or not version:
+            return
+        query = f"{app_name} {version}"
+        log(f"[+] {query}")
+        cves = search_cves_vulners(query)
+        for cve in cves:
+            log(f"    └─ CVE: {cve}")
+
+    for root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+        for path in uninstall_paths:
+            try:
+                with winreg.OpenKey(root, path) as key:
+                    for i in range(0, winreg.QueryInfoKey(key)[0]):
+                        try:
+                            subkey_name = winreg.EnumKey(key, i)
+                            with winreg.OpenKey(key, subkey_name) as subkey:
+                                name = version = None
+                                try:
+                                    name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                                    version = winreg.QueryValueEx(subkey, "DisplayVersion")[0]
+                                except Exception:
+                                    continue
+                                if name and version and not re.search(r"Update|Hotfix|Security|Microsoft Visual C\+\+", name, re.I):
+                                    search_and_log_cves(name, version)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    log("")
+
+
+def check_http_endpoints():
+    log("==== HTTP Endpoint Check ====")
+    try:
+        urls = ["http://localhost", "http://127.0.0.1:8080"]  # Adjust as needed
+        for url in urls:
+            try:
+                res = requests.get(url, timeout=3)
+                log(f"[+] {url} returned {res.status_code}")
+                server = res.headers.get("Server", "")
+                if server:
+                    log(f"    └─ Server Banner: {server}")
+                    cves = search_cves_vulners(server)
+                    for cve in cves:
+                        log(f"       └─ CVE: {cve}")
+            except Exception as e:
+                log(f"[-] {url} unreachable: {e}")
+    except Exception as e:
+        log(f"[!] HTTP check failed: {e}")
+    log("")
+
 def main():
     log("==== Local Windows Vulnerability Report ====\n")
     get_os_info()
@@ -144,6 +205,8 @@ def main():
     check_smbv1()
     check_open_ports_with_banner()
     list_services()
+    check_http_endpoints()
+    get_installed_apps()
     check_admin()
     save_report()
 
